@@ -1,0 +1,47 @@
+name: Campaign config-lock native regression
+on:
+  push:
+    branches: [verify/config-migration-lock-baseline-20261102]
+permissions:
+  contents: read
+jobs:
+  linux-regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      CARGO_BUILD_JOBS: 2
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      RUSTFLAGS: -C debuginfo=0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install declared Rust toolchain
+        run: rustup toolchain install 1.98.0 --profile minimal
+      - name: Run actual Linux integration regression
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p validation
+          git rev-parse HEAD | tee validation/source-head.txt
+          rustc +1.98.0 --version | tee validation/toolchain.txt
+          set +e
+          cargo +1.98.0 test --locked --test integration integration_tests::config_update_locking::test_config_update_preserves_a_cooperating_mutation -- --exact --nocapture 2>&1 | tee validation/native.log
+          pipeline_status=("${PIPESTATUS[@]}")
+          set -e
+          printf '%s\n' "${pipeline_status[0]}" > validation/cargo-exit-code.txt
+          test "${pipeline_status[1]}" -eq 0
+          test "${pipeline_status[0]}" -eq 101
+          grep -Fq 'running 1 test' validation/native.log
+          grep -Fq 'test result: FAILED. 0 passed; 1 failed;' validation/native.log
+          grep -Fq 'migration lost a completed cooperating config mutation' validation/native.log
+          grep -Fq 'ordinary mutation completed while migration waited for approvals' validation/native.log
+          printf 'Expected negative regression confirmed; production source is unchanged.\n' | tee validation/negative-witness.txt
+      - name: Preserve native result even on expected baseline failure
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: config-lock-baseline-${{ github.sha }}
+          path: validation/
