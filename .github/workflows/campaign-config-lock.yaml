@@ -1,0 +1,58 @@
+name: Campaign config migration fixed validation
+on:
+  push:
+    branches: [verify/config-migration-lock-fixed-20261102]
+permissions:
+  contents: read
+jobs:
+  linux-regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      CARGO_BUILD_JOBS: 2
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      RUSTFLAGS: -C debuginfo=0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install declared Rust toolchain
+        run: rustup toolchain install 1.98.0 --profile minimal
+      - name: Validate current-base migration candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p validation
+          git rev-parse HEAD | tee validation/source-head.txt
+          rustc +1.98.0 --version | tee validation/toolchain.txt
+          run_tests() {
+            log="$1"; shift
+            cargo +1.98.0 test --locked "$@" -- --nocapture 2>&1 | tee "validation/$log"
+            grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed;' "validation/$log"
+          }
+          run_tests current-new.log --test integration integration_tests::config_update_locking::
+          grep -Fq 'test result: ok. 7 passed; 0 failed;' validation/current-new.log
+          run_tests current-update-existing.log --test integration integration_tests::config_show::test_config_update
+          run_tests current-update-pty.log --test integration integration_tests::config_update_pty::
+          run_tests current-copy.log --lib config::deprecation::tests::test_copy_approved_commands
+          run_tests current-user.log --lib config::user::tests::
+          run_tests current-approvals.log --lib config::approvals::tests::
+      - name: Validate private composition with pending symlink lock fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp .campaign-validation/config-lock-mutation-composed.rs src/config/user/mutation.rs
+          cp .campaign-validation/config-lock-user-tests4671.rs src/config/user/tests.rs
+          sha256sum src/config/user/mutation.rs src/config/user/tests.rs | tee validation/composed-source-sha256.txt
+          cargo +1.98.0 test --locked --lib config::user::tests::test_config_symlink_alias_uses_the_target_lock -- --exact --nocapture 2>&1 | tee validation/composed-alias.log
+          grep -Fq 'test result: ok. 1 passed; 0 failed;' validation/composed-alias.log
+          cargo +1.98.0 test --locked --test integration integration_tests::config_update_locking:: -- --nocapture 2>&1 | tee validation/composed-migration.log
+          grep -Fq 'test result: ok. 7 passed; 0 failed;' validation/composed-migration.log
+      - name: Preserve actual fixed validation results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: config-migration-fixed-${{ github.sha }}
+          path: validation/
