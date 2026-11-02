@@ -1,7 +1,7 @@
 name: Campaign config migration fixed validation
 on:
   push:
-    branches: [verify/config-migration-lock-fixed-20261102]
+    branches: [verify/config-migration-lock-fixed-continuation-20261102]
 permissions:
   contents: read
 jobs:
@@ -20,7 +20,7 @@ jobs:
           persist-credentials: false
       - name: Install declared Rust toolchain
         run: rustup toolchain install 1.98.0 --profile minimal
-      - name: Validate current-base migration candidate
+      - name: Complete remaining current-base checks after selector correction
         shell: bash
         run: |
           set -euo pipefail
@@ -32,10 +32,7 @@ jobs:
             cargo +1.98.0 test --locked "$@" -- --nocapture 2>&1 | tee "validation/$log"
             grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed;' "validation/$log"
           }
-          run_tests current-new.log --test integration integration_tests::config_update_locking::
-          grep -Fq 'test result: ok. 7 passed; 0 failed;' validation/current-new.log
-          run_tests current-update-existing.log --test integration integration_tests::config_show::test_config_update
-          run_tests current-update-pty.log --test integration integration_tests::config_update_pty::
+          run_tests current-update-pty.log --features shell-integration-tests --test integration integration_tests::config_update_pty::
           run_tests current-copy.log --lib config::deprecation::tests::test_copy_approved_commands
           run_tests current-user.log --lib config::user::tests::
           run_tests current-approvals.log --lib config::approvals::tests::
